@@ -1,10 +1,11 @@
 import javax.swing.*;
 import javax.swing.border.*;
+import javax.swing.table.*;
 import java.awt.*;
-import java.awt.event.*;
 import java.io.*;
 import java.net.*;
-import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
 public class MainApp extends JFrame {
 
@@ -13,11 +14,8 @@ public class MainApp extends JFrame {
     private JButton dlBtn;
     private JProgressBar dlProgress;
     private JLabel dlStatus;
-
-    private JTextField rwUrl;
-    private JButton rwBtn;
-    private JTextArea rwOutput;
-    private JLabel rwStatus;
+    private DefaultTableModel historyModel;
+    private JTable historyTable;
 
     private static final String[] FILE_TYPES = {
         "Otomatis (dari URL)", "PDF (.pdf)", "MP3 (.mp3)",
@@ -29,39 +27,37 @@ public class MainApp extends JFrame {
     };
 
     public MainApp() {
-        setTitle("Aplikasi Jaringan - Download & Read Website");
-        setSize(680, 480);
+        setTitle("Aplikasi Download File");
+        setSize(750, 520);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
+        setLayout(new BorderLayout());
 
-        JTabbedPane tabs = new JTabbedPane();
-        tabs.addTab("  Download File  ", buildDownloadPanel());
-        tabs.addTab("  Read Website  ", buildReadPanel());
-        add(tabs);
+        add(buildDownloadPanel(), BorderLayout.NORTH);
+        add(buildHistoryPanel(), BorderLayout.CENTER);
     }
 
     private JPanel buildDownloadPanel() {
         JPanel p = new JPanel(new GridBagLayout());
-        p.setBorder(new EmptyBorder(16, 16, 16, 16));
+        p.setBorder(BorderFactory.createTitledBorder("Download File"));
         GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(6, 6, 6, 6);
+        g.insets = new Insets(4, 6, 4, 6);
         g.fill = GridBagConstraints.HORIZONTAL;
-        g.anchor = GridBagConstraints.WEST;
 
         g.gridx = 0; g.gridy = 0; g.weightx = 0;
         p.add(new JLabel("URL File:"), g);
         dlUrl = new JTextField(35);
-        g.gridx = 1; g.weightx = 1;
+        g.gridx = 1; g.weightx = 1; g.gridwidth = 2;
         p.add(dlUrl, g);
 
-        g.gridx = 0; g.gridy = 1; g.weightx = 0;
+        g.gridx = 0; g.gridy = 1; g.weightx = 0; g.gridwidth = 1;
         p.add(new JLabel("Jenis File:"), g);
         dlType = new JComboBox<>(FILE_TYPES);
-        g.gridx = 1; g.weightx = 1;
+        g.gridx = 1; g.weightx = 1; g.gridwidth = 2;
         p.add(dlType, g);
 
         dlBtn = new JButton("Download");
-        g.gridx = 0; g.gridy = 2; g.gridwidth = 2; g.weightx = 1;
+        g.gridx = 0; g.gridy = 2; g.gridwidth = 3;
         p.add(dlBtn, g);
 
         dlProgress = new JProgressBar(0, 100);
@@ -77,24 +73,62 @@ public class MainApp extends JFrame {
         return p;
     }
 
+    private JPanel buildHistoryPanel() {
+        JPanel p = new JPanel(new BorderLayout());
+        p.setBorder(BorderFactory.createTitledBorder("Riwayat Download"));
+
+        String[] cols = {"No", "Nama File", "Jenis", "Ukuran", "Lokasi", "Waktu"};
+        historyModel = new DefaultTableModel(cols, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
+        historyTable = new JTable(historyModel);
+        historyTable.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN);
+        historyTable.getColumnModel().getColumn(0).setMaxWidth(40);
+        historyTable.getColumnModel().getColumn(2).setMaxWidth(80);
+        historyTable.getColumnModel().getColumn(3).setMaxWidth(100);
+
+        JScrollPane scroll = new JScrollPane(historyTable);
+        p.add(scroll, BorderLayout.CENTER);
+
+        JButton btnClear = new JButton("Hapus Riwayat");
+        btnClear.addActionListener(e -> historyModel.setRowCount(0));
+        JPanel bottom = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        bottom.add(btnClear);
+        p.add(bottom, BorderLayout.SOUTH);
+
+        return p;
+    }
+
     private void startDownload() {
         String url = dlUrl.getText().trim();
         if (url.isEmpty()) { showWarn("URL tidak boleh kosong!"); return; }
+
         int idx = dlType.getSelectedIndex();
         String ext = EXTENSIONS[idx];
+        String jenisFile = FILE_TYPES[idx];
+
         if (idx == 0) {
             String path = url.replaceAll("[?#].*", "");
-            ext = path.contains(".") ? path.substring(path.lastIndexOf('.')) : "";
+            int dot = path.lastIndexOf('.');
+            int slash = path.lastIndexOf('/');
+            ext = (dot > slash && dot < path.length() - 1) ? path.substring(dot) : "";
+            jenisFile = ext.isEmpty() ? "Unknown" : ext.substring(1).toUpperCase();
         } else if (idx == FILE_TYPES.length - 1) {
             ext = JOptionPane.showInputDialog(this, "Masukkan ekstensi file:", ".txt");
             if (ext == null) return;
             if (!ext.startsWith(".")) ext = "." + ext;
+            jenisFile = ext.substring(1).toUpperCase();
+        } else {
+            jenisFile = ext.substring(1).toUpperCase();
         }
+
         JFileChooser fc = new JFileChooser();
         fc.setDialogTitle("Pilih lokasi simpan");
         fc.setSelectedFile(new File(guessFilename(url, ext)));
         if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
         String savePath = fc.getSelectedFile().getAbsolutePath();
+        String fileName = fc.getSelectedFile().getName();
+        final String fJenis = jenisFile;
 
         dlBtn.setEnabled(false);
         dlProgress.setValue(0);
@@ -110,6 +144,7 @@ public class MainApp extends JFrame {
                 conn.setReadTimeout(30_000);
                 int total = conn.getContentLength();
                 if (total > 0) SwingUtilities.invokeLater(() -> dlProgress.setIndeterminate(false));
+
                 try (InputStream in = conn.getInputStream();
                      FileOutputStream out = new FileOutputStream(savePath)) {
                     byte[] buf = new byte[8192];
@@ -123,13 +158,21 @@ public class MainApp extends JFrame {
                         }
                     }
                 }
+
+                File downloaded = new File(savePath);
+                String size = formatSize(downloaded.length());
+                String waktu = new SimpleDateFormat("dd-MM-yyyy HH:mm:ss").format(new Date());
+
                 SwingUtilities.invokeLater(() -> {
                     dlProgress.setValue(100);
                     dlProgress.setIndeterminate(false);
                     dlStatus.setText("Status: Berhasil diunduh");
                     dlBtn.setEnabled(true);
+                    int no = historyModel.getRowCount() + 1;
+                    historyModel.addRow(new Object[]{no, fileName, fJenis, size, savePath, waktu});
                     JOptionPane.showMessageDialog(this, "File berhasil disimpan ke:\n" + savePath, "Sukses", JOptionPane.INFORMATION_MESSAGE);
                 });
+
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> {
                     dlProgress.setIndeterminate(false);
@@ -142,74 +185,11 @@ public class MainApp extends JFrame {
         }).start();
     }
 
-    private JPanel buildReadPanel() {
-        JPanel p = new JPanel(new BorderLayout(8, 8));
-        p.setBorder(new EmptyBorder(16, 16, 16, 16));
-
-        JPanel top = new JPanel(new BorderLayout(6, 0));
-        rwUrl = new JTextField();
-        rwBtn = new JButton("Baca Website");
-        top.add(new JLabel("URL: "), BorderLayout.WEST);
-        top.add(rwUrl, BorderLayout.CENTER);
-        top.add(rwBtn, BorderLayout.EAST);
-
-        rwOutput = new JTextArea();
-        rwOutput.setEditable(false);
-        rwOutput.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-        rwOutput.setLineWrap(true);
-        rwOutput.setWrapStyleWord(true);
-        JScrollPane scroll = new JScrollPane(rwOutput);
-        scroll.setBorder(BorderFactory.createTitledBorder("Hasil"));
-
-        rwStatus = new JLabel("Status: Siap");
-
-        p.add(top, BorderLayout.NORTH);
-        p.add(scroll, BorderLayout.CENTER);
-        p.add(rwStatus, BorderLayout.SOUTH);
-
-        rwBtn.addActionListener(e -> startRead());
-        rwUrl.addActionListener(e -> startRead());
-        return p;
-    }
-
-    private void startRead() {
-        String url = rwUrl.getText().trim();
-        if (url.isEmpty()) { showWarn("URL tidak boleh kosong!"); return; }
-        if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://" + url;
-        final String finalUrl = url;
-        rwBtn.setEnabled(false);
-        rwOutput.setText("");
-        rwStatus.setText("Status: Membaca...");
-
-        new Thread(() -> {
-            StringBuilder sb = new StringBuilder();
-            try {
-                URL remote = new URL(finalUrl);
-                URLConnection conn = remote.openConnection();
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-                conn.setConnectTimeout(10_000);
-                conn.setReadTimeout(15_000);
-                String enc = conn.getContentEncoding();
-                if (enc == null) enc = StandardCharsets.UTF_8.name();
-                try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), enc))) {
-                    String line;
-                    while ((line = br.readLine()) != null) sb.append(line).append('\n');
-                }
-                String content = sb.toString();
-                SwingUtilities.invokeLater(() -> {
-                    rwOutput.setText(content);
-                    rwOutput.setCaretPosition(0);
-                    rwStatus.setText("Status: Berhasil dibaca (" + content.length() + " karakter)");
-                    rwBtn.setEnabled(true);
-                });
-            } catch (Exception ex) {
-                SwingUtilities.invokeLater(() -> {
-                    rwOutput.setText("Gagal membaca website.\n\nAlasan:\n" + friendlyError(ex));
-                    rwStatus.setText("Status: Gagal");
-                    rwBtn.setEnabled(true);
-                });
-            }
-        }).start();
+    private String formatSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
     }
 
     private String friendlyError(Exception ex) {
